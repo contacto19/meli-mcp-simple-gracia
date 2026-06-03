@@ -1,0 +1,24 @@
+services:
+  - type: web
+    name: meli-mcp-simple-gracia
+    runtime: python
+    plan: starter            # incluye disco persistente; free no persiste el token
+    buildCommand: pip install -r requirements.txt
+    startCommand: python server.py
+    disk:
+      name: meli-token
+      mountPath: /var/data
+      sizeGB: 1
+    envVars:
+      - key: MELI_CLIENT_ID
+        sync: false          # pegar en el dashboard de Render
+      - key: MELI_CLIENT_SECRET
+        sync: false
+      - key: MELI_REFRESH_TOKEN
+        sync: false
+      - key: MELI_SITE
+        value: MLC
+      - key: TOKEN_STORE_PATH
+        value: /var/data/meli_token.json
+      - key: MCP_AUTH_TOKEN
+        sync: false
