@@ -44,7 +44,18 @@ INITIAL_REFRESH_TOKEN = os.environ.get("MELI_REFRESH_TOKEN", "")
 TOKEN_STORE_PATH = os.environ.get("TOKEN_STORE_PATH", "./meli_token.json")
 MCP_AUTH_TOKEN = os.environ.get("MCP_AUTH_TOKEN", "")
 
-mcp = FastMCP("mercadolibre-simple-gracia")
+# Desactiva la proteccion anti DNS-rebinding del SDK para que el endpoint
+# sea accesible detras del proxy de Render (si no, devuelve "Invalid Host header").
+try:
+    from mcp.server.transport_security import TransportSecuritySettings
+    _SECURITY = TransportSecuritySettings(
+        enable_dns_rebinding_protection=False,
+        allowed_hosts=["*"],
+        allowed_origins=["*"],
+    )
+    mcp = FastMCP("mercadolibre-simple-gracia", transport_security=_SECURITY)
+except Exception:
+    mcp = FastMCP("mercadolibre-simple-gracia")
 
 
 # --------------------------------------------------------------------------
