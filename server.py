@@ -309,6 +309,105 @@ def meli_answer_question(question_id: str, text: str, dry_run: bool = True) -> d
     return _request("POST", "/answers", json_body={"question_id": question_id, "text": text})
 
 
+# ==========================================================================
+# PUBLICACION (alta de items) — la info de producto/stock/fotos viene de Shopify
+# ==========================================================================
+@mcp.tool(annotations={"readOnlyHint": True, "openWorldHint": True})
+def meli_category_predict(title: str) -> Any:
+    """Predice la categoria de ML (category_id) a partir de un titulo de producto.
+    Usalo ANTES de crear una publicacion, pasando el titulo del producto Shopify."""
+    return _request("GET", f"/sites/{SITE}/domain_discovery/search", params={"q": title, "limit": 5})
+
+
+@mcp.tool(annotations={"readOnlyHint": True, "openWorldHint": True})
+def meli_category_attributes(category_id: str) -> Any:
+    """Atributos (obligatorios y opcionales) de una categoria. Necesario para armar el payload de creacion."""
+    return _request("GET", f"/categories/{category_id}/attributes")
+
+
+@mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": True, "openWorldHint": True})
+def meli_create_item(title: str, category_id: str, price: float, available_quantity: int,
+                     pictures: list[str], description: str = "", listing_type_id: str = "gold_special",
+                     condition: str = "new", attributes: list | None = None, dry_run: bool = True) -> Any:
+    """Crea una publicacion nueva en Mercado Libre tomando la info desde Shopify.
+    - title, price, available_quantity: del producto Shopify (precio en CLP, stock real).
+    - pictures: lista de URLs de imagen publicas (ej. el CDN de Shopify del producto).
+    - description: texto plano de la descripcion (del producto Shopify).
+    - category_id: usar meli_category_predict primero. attributes: usar meli_category_attributes si la categoria exige.
+    - listing_type_id: 'gold_special' (clasica) o 'gold_pro' (premium).
+    GUARDRAIL: dry_run=True solo previsualiza el payload. Para publicar en vivo, dry_run=False (confirmar con el usuario)."""
+    body: dict = {
+        "title": title,
+        "category_id": category_id,
+        "price": price,
+        "currency_id": "CLP",
+        "available_quantity": available_quantity,
+        "buying_mode": "buy_it_now",
+        "listing_type_id": listing_type_id,
+        "condition": condition,
+        "pictures": [{"source": u} for u in (pictures or [])],
+    }
+    if attributes:
+        body["attributes"] = attributes
+    if dry_run:
+        return {"dry_run": True, "accion": "POST /items", "payload": body, "descripcion": description[:300],
+                "nota": "No se publico nada. Confirma con el usuario y vuelve a llamar con dry_run=False."}
+    res = _request("POST", "/items", json_body=body)
+    # Si se creo, intenta cargar la descripcion en texto plano.
+    if isinstance(res, dict) and res.get("id") and description:
+        _request("POST", f"/items/{res['id']}/description", json_body={"plain_text": description})
+    return res
+
+
+# ==========================================================================
+# PUBLICIDAD (Product Ads)
+# OJO: requiere el scope de Publicidad habilitado en la app de MeLi. Hoy esta en
+# 'Sin acceso' -> hay que editar permisos y re-autorizar (re-hacer el OAuth) para usarlo.
+# ==========================================================================
+def _ads_request(method: str, path: str, *, params: dict | None = None, json_body: dict | None = None) -> Any:
+    """Como _request pero agrega el header Api-Version requerido por la API de Publicidad."""
+    url = path if path.startswith("http") else f"{API_BASE}{path}"
+    import time
+    for attempt in range(3):
+        headers = {"Authorization": f"Bearer {_token()}", "Accept": "application/json", "Api-Version": "1"}
+        try:
+            r = httpx.request(method, url, params=params, json=json_body, headers=headers, timeout=40)
+            if r.status_code == 401:
+                _refresh_access_token()
+                continue
+            if r.status_code >= 400:
+                return {"error": f"HTTP {r.status_code}", "detail": r.text[:500],
+                        "hint": "Si es 403/forbidden, falta el scope de Publicidad: edita permisos de la app y re-autoriza."}
+            return r.json()
+        except httpx.HTTPError as e:
+            time.sleep(1.5 * (attempt + 1))
+    return {"error": "request_failed"}
+
+
+@mcp.tool(annotations={"readOnlyHint": True, "openWorldHint": True})
+def meli_ads_advertisers() -> Any:
+    """Lista los advertisers de Product Ads de la cuenta (para obtener advertiser_id)."""
+    return _ads_request("GET", "/advertising/advertisers", params={"product_id": "PADS"})
+
+
+@mcp.tool(annotations={"readOnlyHint": True, "openWorldHint": True})
+def meli_ads_campaigns(advertiser_id: str) -> Any:
+    """Lista las campañas de Product Ads de un advertiser (estado, presupuesto, ACOS, metricas)."""
+    return _ads_request("GET", f"/advertising/advertisers/{advertiser_id}/product_ads/campaigns")
+
+
+@mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": True, "openWorldHint": True})
+def meli_ads_request(method: str, path: str, body: dict | None = None, dry_run: bool = True) -> Any:
+    """Generico para la API de Publicidad: crear/editar campañas, activar/pausar ads, fijar presupuesto y ACOS objetivo.
+    method: GET|POST|PUT. path: ej. '/advertising/advertisers/{id}/product_ads/campaigns'.
+    GUARDRAIL: en escrituras (POST/PUT) dry_run=True solo previsualiza. dry_run=False ejecuta (confirmar con el usuario).
+    Requiere scope de Publicidad habilitado en la app (si da 403, re-autorizar la app con ese permiso)."""
+    if method.upper() != "GET" and dry_run:
+        return {"dry_run": True, "accion": f"{method.upper()} {path}", "body": body,
+                "nota": "No se ejecuto. Confirma con el usuario y vuelve con dry_run=False."}
+    return _ads_request(method.upper(), path, json_body=body)
+
+
 # --------------------------------------------------------------------------
 # Arranque
 # --------------------------------------------------------------------------
