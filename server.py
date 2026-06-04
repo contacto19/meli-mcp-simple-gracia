@@ -338,6 +338,7 @@ def meli_create_item(title: str, category_id: str, price: float, available_quant
     GUARDRAIL: dry_run=True solo previsualiza el payload. Para publicar en vivo, dry_run=False (confirmar con el usuario)."""
     body: dict = {
         "title": title,
+        "family_name": title,
         "category_id": category_id,
         "price": price,
         "currency_id": "CLP",
